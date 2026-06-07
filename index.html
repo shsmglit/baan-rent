@@ -276,10 +276,10 @@
     <div class="h2">การแจ้งเตือนเข้า LINE</div>
     <div class="card alert-card">
       <div class="alert-row"><div class="ai green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 004 0"/></svg></div>
-        <div class="at"><b>เตือนผู้เช่าก่อนครบกำหนด</b><span>ทุกวันที่ 1 ของเดือน</span></div>
+        <div class="at"><b>เตือนผู้เช่าก่อนครบกำหนด</b><span id="subBefore">ทุกวันที่ 1 ของเดือน</span></div>
         <div class="toggle" data-key="remind_before_due" onclick="toggleAlert(this)"></div></div>
       <div class="alert-row"><div class="ai amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3z"/><path d="M12 10v5M12 18h.01"/></svg></div>
-        <div class="at"><b>เตือนเมื่อเลยกำหนด</b><span>วันที่ 6 ถ้ายังไม่จ่าย</span></div>
+        <div class="at"><b>เตือนเมื่อเลยกำหนด</b><span id="subOverdue">วันที่ 6 ถ้ายังไม่จ่าย</span></div>
         <div class="toggle" data-key="remind_overdue" onclick="toggleAlert(this)"></div></div>
       <div class="alert-row"><div class="ai red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></div>
         <div class="at"><b>แจ้งฉันเมื่อผู้เช่าส่งสลิป</b><span>ทันทีที่ได้รับสลิป</span></div>
@@ -315,6 +315,8 @@
           <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
         </select></div>
       <div class="field" style="margin:0 24px 18px"><label for="fStartYear">ปีเริ่มสัญญา (พ.ศ.)</label><input id="fStartYear" type="number" min="2500" max="2700"></div>
+      <div class="field" style="margin:0 24px 18px"><label for="fRemindBefore">วันที่เตือนผู้เช่า (ก่อนครบกำหนด)</label><input id="fRemindBefore" type="number" min="1" max="28"></div>
+      <div class="field" style="margin:0 24px 18px"><label for="fRemindOverdue">วันที่เตือนซ้ำ (เมื่อเลยกำหนด)</label><input id="fRemindOverdue" type="number" min="1" max="28"></div>
       <div class="savebar">
         <button class="btn btn-ghost" onclick="closeSettings()">ยกเลิก</button>
         <button class="btn btn-primary" onclick="saveSettings()">บันทึก</button>
@@ -636,6 +638,9 @@ function renderAlerts() {
     const on = settings?.[t.dataset.key] !== false;
     t.classList.toggle("off", !on);
   });
+  const rb = settings?.remind_before_day || 1, ro = settings?.remind_overdue_day || 6;
+  $("subBefore").textContent = `ทุกวันที่ ${rb} ของเดือน`;
+  $("subOverdue").textContent = `วันที่ ${ro} ถ้ายังไม่จ่าย`;
 }
 
 // ---------- actions ----------
@@ -676,6 +681,8 @@ function openSettings() {
   $("fDue").value = tenant.due_day || 5;
   $("fStartMonth").value = tenant.start_month || 7;
   $("fStartYear").value = toBE(tenant.start_year || CUR_Y);
+  $("fRemindBefore").value = settings?.remind_before_day || 1;
+  $("fRemindOverdue").value = settings?.remind_overdue_day || 6;
   $("setOverlay").classList.add("show");
 }
 function closeSettings() { $("setOverlay").classList.remove("show"); }
@@ -693,6 +700,15 @@ async function saveSettings() {
   if (start_year_be > 2500) patch.start_year = start_year_be - 543;  // พ.ศ. → ค.ศ.
   const { error } = await supabase.from("tenants").update(patch).eq("id", tenant.id);
   if (error) { toast("บันทึกไม่สำเร็จ"); return; }
+
+  // วันทวงเก็บใน app_settings (คนละตาราง)
+  const rb = parseInt($("fRemindBefore").value, 10);
+  const ro = parseInt($("fRemindOverdue").value, 10);
+  const setPatch = { updated_at: new Date().toISOString() };
+  if (rb >= 1 && rb <= 28) setPatch.remind_before_day = rb;
+  if (ro >= 1 && ro <= 28) setPatch.remind_overdue_day = ro;
+  await supabase.from("app_settings").update(setPatch).eq("id", 1);
+
   closeSettings(); toast("บันทึกการตั้งค่าแล้ว");
   await loadData();
 }
