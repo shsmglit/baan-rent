@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ค่าเช่าบ้าน · สำหรับพ่อแม่</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Text:wght@400;500;700&display=swap" rel="stylesheet">
@@ -125,6 +126,12 @@
 
   .months{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
   .empty-note{grid-column:1/-1;text-align:center;color:var(--ink-soft);font-size:17px;font-weight:500;padding:30px 10px}
+  .dzone{margin:8px 24px 24px;padding-top:18px;border-top:1.5px solid var(--line)}
+  .dzone-title{font-size:18px;font-weight:700;margin-bottom:6px}
+  .dzone-note{font-size:15px;color:var(--ink-soft);line-height:1.6;margin:0 0 14px}
+  .dz-btn{width:100%;margin-bottom:10px}
+  .dz-danger{width:100%;background:var(--surface);border:1.5px solid var(--over);color:var(--over-text);font-weight:700}
+  .dz-danger:disabled,.dz-btn:disabled{opacity:.5;cursor:default}
   .mo{background:var(--surface);border:1.5px solid var(--line);border-radius:22px;padding:22px 18px;text-align:center;box-shadow:var(--shadow)}
   .mo.now{box-shadow:0 0 0 3px rgba(47,111,78,.16),var(--shadow)}
   .mo .mname{font-size:22px;font-weight:700}
@@ -320,6 +327,13 @@
       <div class="savebar">
         <button class="btn btn-ghost" onclick="closeSettings()">ยกเลิก</button>
         <button class="btn btn-primary" onclick="saveSettings()">บันทึก</button>
+      </div>
+
+      <div class="dzone">
+        <div class="dzone-title">จัดการผู้เช่า / เปลี่ยนผู้เช่า</div>
+        <p class="dzone-note">เมื่อจะเปลี่ยนผู้เช่า ให้ดาวน์โหลดประวัติเก็บไว้ก่อน แล้วค่อยล้างข้อมูลเพื่อเริ่มใหม่</p>
+        <button class="btn btn-ghost dz-btn" id="btnExport" onclick="exportHistory()">⬇ ดาวน์โหลดประวัติ + สลิป (.zip)</button>
+        <button class="btn dz-danger" id="btnReset" onclick="resetTenant()">ปลดผู้เช่า + ล้างประวัติทั้งหมด</button>
       </div>
     </div>
   </div>
@@ -714,10 +728,97 @@ async function saveSettings() {
 }
 function changeYear(d) { const lo = tenant.start_year || (CUR_Y - 3); viewYear = Math.max(lo, Math.min(CUR_Y, viewYear + d)); renderMonths(); renderStats(); }
 
+// ---------- export & reset ----------
+const csvCell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+let exported = false;  // ต้อง export ก่อนถึงจะล้างได้
+
+async function exportHistory() {
+  if (!tenant) { toast("ยังไม่มีผู้เช่า"); return; }
+  const btn = $("btnExport"); btn.disabled = true; const old = btn.textContent; btn.textContent = "กำลังเตรียมไฟล์…";
+  try {
+    // ดึง payments ทั้งหมด (ทุกสถานะ) ของผู้เช่าปัจจุบัน
+    const { data: all } = await supabase.from("payments").select("*")
+      .eq("tenant_id", tenant.id).order("period_year").order("period_month").order("submitted_at");
+    const rows = all || [];
+
+    const statusTH = { received: "รอตรวจสอบ", confirmed: "ยืนยันแล้ว", rejected: "ปฏิเสธ" };
+    const header = ["เดือน", "ปี(พ.ศ.)", "วันที่ส่ง", "ยอด(บาท)", "สถานะ", "ไฟล์สลิป"];
+    const lines = [header.map(csvCell).join(",")];
+    const zip = new JSZip();
+    const slipFolder = zip.folder("slips");
+
+    for (let i = 0; i < rows.length; i++) {
+      const p = rows[i];
+      let slipName = "";
+      if (p.slip_path) {
+        slipName = `${p.period_year}-${String(p.period_month).padStart(2, "0")}_${i + 1}.jpg`;
+        try {
+          const { data: signed } = await supabase.storage.from("slips").createSignedUrl(p.slip_path, 120);
+          if (signed?.signedUrl) {
+            const blob = await (await fetch(signed.signedUrl)).blob();
+            slipFolder.file(slipName, blob);
+          }
+        } catch { slipName += " (โหลดรูปไม่สำเร็จ)"; }
+      }
+      lines.push([
+        TH_MONTHS[p.period_month - 1], toBE(p.period_year),
+        new Date(p.submitted_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }),
+        p.amount ?? "", statusTH[p.status] || p.status, slipName,
+      ].map(csvCell).join(","));
+    }
+
+    // BOM นำหน้าเพื่อให้ Excel อ่านภาษาไทยถูก
+    zip.file(`ประวัติค่าเช่า_${tenant.display_name || "ผู้เช่า"}.csv`, "\uFEFF" + lines.join("\r\n"));
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ประวัติค่าเช่า_${tenant.display_name || "ผู้เช่า"}_${toBE(CUR_Y)}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+
+    exported = true;
+    $("btnReset").textContent = "ปลดผู้เช่า + ล้างประวัติทั้งหมด";
+    toast("ดาวน์โหลดประวัติแล้ว");
+  } catch (e) {
+    console.error(e); toast("ดาวน์โหลดไม่สำเร็จ");
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+async function resetTenant() {
+  if (!tenant) { toast("ยังไม่มีผู้เช่า"); return; }
+  if (!exported && !confirm("คุณยังไม่ได้ดาวน์โหลดประวัติในรอบนี้\nต้องการล้างข้อมูลทั้งหมดเลยหรือไม่? (ข้อมูลจะหายถาวร)")) return;
+  if (!confirm(`ยืนยันล้างข้อมูลผู้เช่า "${tenant.display_name || ""}" ทั้งหมด?\n\nจะลบ: ประวัติการจ่ายทุกเดือน + รูปสลิปทั้งหมด + ปลดการผูก LINE\nการกระทำนี้ย้อนกลับไม่ได้`)) return;
+
+  const btn = $("btnReset"); btn.disabled = true; btn.textContent = "กำลังล้างข้อมูล…";
+  try {
+    // 1) ลบรูปสลิปใน Storage
+    const { data: all } = await supabase.from("payments").select("slip_path").eq("tenant_id", tenant.id);
+    const paths = (all || []).map((p) => p.slip_path).filter(Boolean);
+    if (paths.length) await supabase.storage.from("slips").remove(paths);
+
+    // 2) ลบ tenant (payments ถูกลบตามด้วย ON DELETE CASCADE)
+    const { error } = await supabase.from("tenants").delete().eq("id", tenant.id);
+    if (error) { toast("ล้างข้อมูลไม่สำเร็จ"); btn.disabled = false; return; }
+
+    exported = false;
+    closeSettings();
+    toast("ล้างข้อมูลแล้ว พร้อมรับผู้เช่าใหม่");
+    await loadData();
+  } catch (e) {
+    console.error(e); toast("ล้างข้อมูลไม่สำเร็จ");
+  } finally {
+    btn.disabled = false; btn.textContent = "ปลดผู้เช่า + ล้างประวัติทั้งหมด";
+  }
+}
+
 let tt; function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(tt); tt = setTimeout(() => t.classList.remove("show"), 2600); }
 
 // expose handlers for inline onclick
-Object.assign(window, { doLogin, doLogout, confirmPayment, rejectPayment, viewSlip, closeSlip, toggleAlert, openSettings, closeSettings, saveSettings, changeYear, checkDiff, confirmTenant, rejectTenant });
+Object.assign(window, { doLogin, doLogout, confirmPayment, rejectPayment, viewSlip, closeSlip, toggleAlert, openSettings, closeSettings, saveSettings, changeYear, checkDiff, confirmTenant, rejectTenant, exportHistory, resetTenant });
 
 // ปิดหน้าต่างเฉพาะเมื่อ "เริ่มกด" บนพื้นหลังมืดเท่านั้น
 // (กันบั๊ก: ลากคลุมดำข้อความในช่องแล้วปล่อยเมาส์บนพื้นหลัง = ไม่ปิด)
