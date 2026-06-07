@@ -1,0 +1,30 @@
+name: daily-rent-reminders
+
+# ยิงเข้า Edge Function daily-reminders ทุกเช้า เพื่อเตือนค่าเช่าผู้เช่าทาง LINE
+# (ฟังก์ชันจะเช็กเองว่าวันนี้ตรงวันทวงไหม + เดือนนี้จ่ายครบหรือยัง)
+
+on:
+  schedule:
+    # ทุกวัน 01:00 UTC (= 08:00 น. เวลาไทย)
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily reminders
+        run: |
+          echo "Triggering reminders at $(date -u)"
+          code=$(curl -s -o /tmp/out.txt -w "%{http_code}" -X POST \
+            "${SUPABASE_URL}/functions/v1/daily-reminders" \
+            -H "x-cron-key: ${CRON_SECRET}" \
+            -H "Content-Type: application/json")
+          echo "HTTP status: $code"
+          echo "Response:"; cat /tmp/out.txt; echo
+          if [ "$code" != "200" ]; then
+            echo "Reminder call failed"; exit 1
+          fi
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
