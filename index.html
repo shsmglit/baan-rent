@@ -74,6 +74,19 @@
   .rcard .ok{background:linear-gradient(135deg,var(--brand),var(--brand-deep));color:#fff}
   .rcard .no{background:var(--surface);border:1.5px solid var(--over)!important;color:var(--over-text)}
 
+  /* pending tenant requests */
+  .pending-wrap{margin-top:24px}
+  .pcard{background:var(--surface);border:2px solid #7C5CBF;border-radius:22px;padding:20px;box-shadow:var(--shadow);margin-bottom:14px}
+  .pcard .phead{display:flex;align-items:center;gap:16px}
+  .pcard .pavatar{width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--bg2);flex-shrink:0}
+  .pcard .pavatar.noimg{display:grid;place-items:center;color:var(--ink-soft);font-size:26px;font-weight:700}
+  .pcard .pname{font-size:21px;font-weight:700}
+  .pcard .psub{font-size:15px;color:var(--ink-soft);margin-top:2px}
+  .pcard .acts{display:flex;gap:12px;margin-top:18px}
+  .pcard .acts button{flex:1;min-height:54px;border-radius:999px;font-family:inherit;font-weight:700;font-size:18px;cursor:pointer;border:0}
+  .pcard .ok{background:linear-gradient(135deg,var(--brand),var(--brand-deep));color:#fff}
+  .pcard .no{background:var(--surface);border:1.5px solid var(--over);color:var(--over-text)}
+
   /* hero */
   .hero{margin-top:24px;border-radius:26px;overflow:hidden;box-shadow:var(--shadow-lg)}
   .hero-top{padding:26px 30px 24px;color:#fff;display:flex;flex-direction:column;gap:18px}
@@ -207,6 +220,12 @@
   <div class="loading" id="loading">กำลังโหลดข้อมูล…</div>
 
   <div id="content" class="hidden">
+    <!-- คำขอเป็นผู้เช่า (รอพ่อแม่ยืนยัน) -->
+    <div class="pending-wrap hidden" id="pendingWrap">
+      <div class="review-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg> คำขอเป็นผู้เช่า <span class="badge" id="pendingCount">0</span></div>
+      <div id="pendingList"></div>
+    </div>
+
     <!-- pending review -->
     <div class="review-wrap hidden" id="reviewWrap">
       <div class="review-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5h6V7H9z"/><path d="M8.5 11h7M8.5 15h5"/></svg> รอตรวจสอบ <span class="badge" id="reviewCount">0</span></div>
@@ -321,7 +340,7 @@ const toBE = (y) => y + 543;
 const baht = (n) => "฿ " + Number(n || 0).toLocaleString("th-TH");
 const $ = (id) => document.getElementById(id);
 
-let tenant = null, payments = [], settings = null, viewYear = CUR_Y;
+let tenant = null, payments = [], settings = null, pending = [], viewYear = CUR_Y;
 
 const ICON = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>',
@@ -374,6 +393,9 @@ async function loadData() {
     const { data: s } = await supabase.from("app_settings").select("*").eq("id", 1).single();
     settings = s || {};
 
+    const { data: pc } = await supabase.from("pending_contacts").select("*").eq("status", "pending").order("created_at");
+    pending = pc || [];
+
     $("loading").classList.add("hidden");
     $("content").classList.remove("hidden");
     renderAll();
@@ -398,7 +420,7 @@ function monthAgg(y, m) {
   return { list, confirmed, pending, received, rent, short: Math.max(0, rent - received) };
 }
 
-function renderAll() { renderHeader(); renderReview(); renderHero(); renderStats(); renderMonths(); renderAlerts(); }
+function renderAll() { renderHeader(); renderPending(); renderReview(); renderHero(); renderStats(); renderMonths(); renderAlerts(); }
 
 function renderHeader() {
   $("subTenant").textContent = "บัญชีค่าเช่าของ" + (tenant.display_name || "ผู้เช่า");
@@ -444,6 +466,48 @@ function checkDiff(id) {
   if (d > 0) { el.className = "diff is-short"; el.textContent = `ยังขาดอีก ${baht(d)} จะครบค่าเช่าเดือนนี้`; }
   else if (d < 0) { el.className = "diff is-over"; el.textContent = `เกินยอดที่ค้าง ${baht(-d)}`; }
   else { el.className = "diff is-ok"; el.textContent = "✓ พอดีกับยอดที่ค้างเดือนนี้"; }
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function renderPending() {
+  const wrap = $("pendingWrap");
+  if (!pending.length) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  $("pendingCount").textContent = pending.length;
+  $("pendingList").innerHTML = pending.map((c) => {
+    const name = esc(c.display_name || "(ไม่ทราบชื่อ)");
+    const initial = (c.display_name || "?").trim().charAt(0);
+    const avatar = c.picture_url
+      ? `<img class="pavatar" src="${esc(c.picture_url)}" alt="" referrerpolicy="no-referrer">`
+      : `<div class="pavatar noimg">${esc(initial)}</div>`;
+    const when = new Date(c.created_at).toLocaleString("th-TH", { dateStyle: "long", timeStyle: "short" });
+    return `
+    <div class="pcard">
+      <div class="phead">
+        ${avatar}
+        <div><div class="pname">${name}</div><div class="psub">ทักเข้ามาทาง LINE · ${when}</div></div>
+      </div>
+      <div class="acts">
+        <button class="ok" onclick="confirmTenant('${c.line_user_id}')">ยืนยันเป็นผู้เช่า</button>
+        <button class="no" onclick="rejectTenant('${c.line_user_id}')">ปฏิเสธ</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function confirmTenant(uid) {
+  const { error } = await supabase.from("tenants").update({ line_user_id: uid }).eq("id", tenant.id);
+  if (error) { toast("ยืนยันไม่สำเร็จ"); return; }
+  await supabase.from("pending_contacts").delete().eq("line_user_id", uid);
+  toast("ยืนยันเป็นผู้เช่าแล้ว");
+  await loadData();
+}
+async function rejectTenant(uid) {
+  const { error } = await supabase.from("pending_contacts").update({ status: "rejected" }).eq("line_user_id", uid);
+  if (error) { toast("ทำรายการไม่สำเร็จ"); return; }
+  toast("ปฏิเสธแล้ว");
+  await loadData();
 }
 
 function renderHero() {
@@ -616,7 +680,7 @@ function changeYear(d) { const lo = tenant.start_year || (CUR_Y - 3); viewYear =
 let tt; function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(tt); tt = setTimeout(() => t.classList.remove("show"), 2600); }
 
 // expose handlers for inline onclick
-Object.assign(window, { doLogin, doLogout, confirmPayment, rejectPayment, viewSlip, closeSlip, toggleAlert, openSettings, closeSettings, saveSettings, changeYear, checkDiff });
+Object.assign(window, { doLogin, doLogout, confirmPayment, rejectPayment, viewSlip, closeSlip, toggleAlert, openSettings, closeSettings, saveSettings, changeYear, checkDiff, confirmTenant, rejectTenant });
 
 // ปิดหน้าต่างเฉพาะเมื่อ "เริ่มกด" บนพื้นหลังมืดเท่านั้น
 // (กันบั๊ก: ลากคลุมดำข้อความในช่องแล้วปล่อยเมาส์บนพื้นหลัง = ไม่ปิด)
