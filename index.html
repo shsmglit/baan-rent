@@ -232,6 +232,9 @@
       <div id="reviewList"></div>
     </div>
 
+    <div class="empty-note hidden" id="noTenantNote">ยังไม่มีผู้เช่า — เมื่อมีคนทักเข้ามาทาง LINE จะขึ้น "คำขอเป็นผู้เช่า" ให้กดยืนยันที่นี่</div>
+
+    <div id="tenantSection">
     <!-- hero -->
     <div class="hero">
       <div id="heroTop" class="hero-top due">
@@ -284,6 +287,7 @@
     </div>
 
     <p class="note">แตะ "ดูสลิป" เพื่อดูรูปหลักฐานการโอนจริง · ยอดจะยืนยันหลังตรวจสลิป</p>
+    </div>
   </div>
 </div>
 
@@ -383,12 +387,14 @@ async function loadData() {
   try {
     const { data: ts } = await supabase.from("tenants").select("*").eq("active", true).order("created_at").limit(1);
     tenant = ts?.[0] || null;
-    if (!tenant) { $("loading").textContent = "ยังไม่มีข้อมูลผู้เช่า — ให้ผู้เช่าส่งสลิปแรกเข้ามาก่อน"; return; }
 
-    const { data: ps } = await supabase.from("payments").select("*")
-      .eq("tenant_id", tenant.id).neq("status", "rejected")
-      .order("period_year").order("period_month");
-    payments = ps || [];
+    payments = [];
+    if (tenant) {
+      const { data: ps } = await supabase.from("payments").select("*")
+        .eq("tenant_id", tenant.id).neq("status", "rejected")
+        .order("period_year").order("period_month");
+      payments = ps || [];
+    }
 
     const { data: s } = await supabase.from("app_settings").select("*").eq("id", 1).single();
     settings = s || {};
@@ -420,7 +426,14 @@ function monthAgg(y, m) {
   return { list, confirmed, pending, received, rent, short: Math.max(0, rent - received) };
 }
 
-function renderAll() { renderHeader(); renderPending(); renderReview(); renderHero(); renderStats(); renderMonths(); renderAlerts(); }
+function renderAll() {
+  renderPending();
+  const hasT = !!tenant;
+  $("tenantSection").classList.toggle("hidden", !hasT);
+  $("noTenantNote").classList.toggle("hidden", hasT || pending.length > 0);
+  if (!hasT) { $("reviewWrap").classList.add("hidden"); return; }
+  renderHeader(); renderReview(); renderHero(); renderStats(); renderMonths(); renderAlerts();
+}
 
 function renderHeader() {
   $("subTenant").textContent = "บัญชีค่าเช่าของ" + (tenant.display_name || "ผู้เช่า");
@@ -497,8 +510,16 @@ function renderPending() {
 }
 
 async function confirmTenant(uid) {
-  const { error } = await supabase.from("tenants").update({ line_user_id: uid }).eq("id", tenant.id);
-  if (error) { toast("ยืนยันไม่สำเร็จ"); return; }
+  const c = pending.find((x) => x.line_user_id === uid);
+  if (tenant) {
+    const { error } = await supabase.from("tenants").update({ line_user_id: uid }).eq("id", tenant.id);
+    if (error) { toast("ยืนยันไม่สำเร็จ"); return; }
+  } else {
+    // ยังไม่มีผู้เช่า → สร้างใหม่จากชื่อโปรไฟล์ LINE (ค่าเช่า/วันครบกำหนดไปตั้งในหน้าตั้งค่า)
+    const { error } = await supabase.from("tenants")
+      .insert({ display_name: c?.display_name || "ผู้เช่า", line_user_id: uid, rent_amount: 0, due_day: 5 });
+    if (error) { toast("สร้างผู้เช่าไม่สำเร็จ"); return; }
+  }
   await supabase.from("pending_contacts").delete().eq("line_user_id", uid);
   toast("ยืนยันเป็นผู้เช่าแล้ว");
   await loadData();
