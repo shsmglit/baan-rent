@@ -509,24 +509,24 @@ function renderPending() {
   }).join("");
 }
 
+async function callConfirmFn(action, uid) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/confirm-tenant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, line_user_id: uid }),
+  });
+  if (!res.ok) { let d = {}; try { d = await res.json(); } catch {} throw new Error(d.error || res.status); }
+  return res.json();
+}
 async function confirmTenant(uid) {
-  const c = pending.find((x) => x.line_user_id === uid);
-  if (tenant) {
-    const { error } = await supabase.from("tenants").update({ line_user_id: uid }).eq("id", tenant.id);
-    if (error) { toast("ยืนยันไม่สำเร็จ"); return; }
-  } else {
-    // ยังไม่มีผู้เช่า → สร้างใหม่จากชื่อโปรไฟล์ LINE (ค่าเช่า/วันครบกำหนดไปตั้งในหน้าตั้งค่า)
-    const { error } = await supabase.from("tenants")
-      .insert({ display_name: c?.display_name || "ผู้เช่า", line_user_id: uid, rent_amount: 0, due_day: 5 });
-    if (error) { toast("สร้างผู้เช่าไม่สำเร็จ"); return; }
-  }
-  await supabase.from("pending_contacts").delete().eq("line_user_id", uid);
+  try { await callConfirmFn("confirm", uid); } catch (e) { toast("ยืนยันไม่สำเร็จ"); return; }
   toast("ยืนยันเป็นผู้เช่าแล้ว");
   await loadData();
 }
 async function rejectTenant(uid) {
-  const { error } = await supabase.from("pending_contacts").update({ status: "rejected" }).eq("line_user_id", uid);
-  if (error) { toast("ทำรายการไม่สำเร็จ"); return; }
+  try { await callConfirmFn("reject", uid); } catch (e) { toast("ทำรายการไม่สำเร็จ"); return; }
   toast("ปฏิเสธแล้ว");
   await loadData();
 }
