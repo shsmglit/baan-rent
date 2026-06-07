@@ -1,0 +1,32 @@
+name: keep-supabase-awake
+
+# ปลุกโปรเจกต์ Supabase (free tier) ไม่ให้ถูก pause จากการเงียบเกิน 7 วัน
+# ยิง request เบาๆ เข้า REST API วันละครั้ง = นับเป็น activity
+
+on:
+  schedule:
+    # รันทุกวันเวลา 02:00 UTC (= 09:00 น. เวลาไทย)
+    - cron: "0 2 * * *"
+  workflow_dispatch:   # กดรันเองได้จากแท็บ Actions เพื่อทดสอบ
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        run: |
+          echo "Pinging Supabase at $(date -u)"
+          # query app_settings 1 แถว (เบามาก) — ใช้ anon key ใส่ผ่าน secret
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/app_settings?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "HTTP status: $code"
+          # 200 = สำเร็จ ; ถ้าได้ค่าอื่นให้ job ฟ้อง error
+          if [ "$code" != "200" ]; then
+            echo "Ping failed (expected 200)"; exit 1
+          fi
+          echo "Supabase is awake ✅"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
